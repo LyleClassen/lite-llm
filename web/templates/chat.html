@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .chat-container {
+            height: calc(100vh - 200px);
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div class="min-h-screen">
+        <!-- Header -->
+        <nav class="gradient-bg text-white shadow-lg">
+            <div class="max-w-7xl mx-auto px-4">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <a href="/" class="text-xl font-bold">Lite LLM</a>
+                    </div>
+                    <div class="flex items-center space-x-4">
+                        <select id="model-select" class="bg-white text-gray-900 px-3 py-1 rounded">
+                            <option value="">Loading models...</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Chat Interface -->
+        <div class="max-w-4xl mx-auto py-6 px-4">
+            <div class="bg-white rounded-lg shadow-lg">
+                <!-- Chat Messages -->
+                <div id="chat-messages" class="chat-container overflow-y-auto p-6 space-y-4">
+                    <div class="text-center text-gray-500">
+                        <p>Select a model and start chatting!</p>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="border-t p-4">
+                    <div class="flex space-x-4">
+                        <input 
+                            type="text" 
+                            id="message-input" 
+                            placeholder="Type your message..." 
+                            class="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            disabled
+                        >
+                        <button 
+                            id="send-button" 
+                            class="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold py-2 px-6 rounded-lg transition duration-200"
+                            disabled
+                        >
+                            Send
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedModel = '';
+        let messages = [];
+        let isGenerating = false;
+
+        // Load available models
+        async function loadModels() {
+            try {
+                const response = await fetch('/api/models');
+                const data = await response.json();
+                
+                const modelSelect = document.getElementById('model-select');
+                modelSelect.innerHTML = '<option value="">Select a model...</option>';
+                
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.name;
+                        option.textContent = `${model.name} (${(model.size / (1024*1024*1024)).toFixed(1)} GB)`;
+                        modelSelect.appendChild(option);
+                    });
+                } else {
+                    modelSelect.innerHTML = '<option value="">No models available</option>';
+                }
+            } catch (error) {
+                console.error('Failed to load models:', error);
+                document.getElementById('model-select').innerHTML = '<option value="">Error loading models</option>';
+            }
+        }
+
+        // Handle model selection
+        document.getElementById('model-select').addEventListener('change', function(e) {
+            selectedModel = e.target.value;
+            const messageInput = document.getElementById('message-input');
+            const sendButton = document.getElementById('send-button');
+            
+            if (selectedModel) {
+                messageInput.disabled = false;
+                sendButton.disabled = false;
+                messageInput.focus();
+            } else {
+                messageInput.disabled = true;
+                sendButton.disabled = true;
+            }
+        });
+
+        // Handle message sending
+        document.getElementById('send-button').addEventListener('click', sendMessage);
+        document.getElementById('message-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        async function sendMessage() {
+            if (!selectedModel || isGenerating) return;
+            
+            const messageInput = document.getElementById('message-input');
+            const message = messageInput.value.trim();
+            
+            if (!message) return;
+            
+            // Add user message
+            addMessage('user', message);
+            messageInput.value = '';
+            
+            // Add user message to conversation
+            messages.push({ role: 'user', content: message });
+            
+            // Show loading state
+            isGenerating = true;
+            updateButtonState();
+            
+            const loadingDiv = addMessage('assistant', 'Generating response...');
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        model: selectedModel,
+                        messages: messages
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Remove loading message
+                    loadingDiv.remove();
+                    
+                    // Add assistant response
+                    addMessage('assistant', data.message.content);
+                    messages.push({ role: 'assistant', content: data.message.content });
+                } else {
+                    loadingDiv.querySelector('.message-content').textContent = 'Error: ' + (data.error || 'Failed to generate response');
+                }
+            } catch (error) {
+                loadingDiv.querySelector('.message-content').textContent = 'Error: Failed to connect to server';
+            }
+            
+            isGenerating = false;
+            updateButtonState();
+        }
+
+        function addMessage(role, content) {
+            const messagesContainer = document.getElementById('chat-messages');
+            
+            // Clear welcome message if this is the first message
+            if (messages.length === 0 && role === 'user') {
+                messagesContainer.innerHTML = '';
+            }
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flex ${role === 'user' ? 'justify-end' : 'justify-start'}`;
+            
+            messageDiv.innerHTML = `
+                <div class="max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                    role === 'user' 
+                        ? 'bg-blue-600 text-white' 
+                        : 'bg-gray-200 text-gray-900'
+                }">
+                    <div class="message-content">${content}</div>
+                </div>
+            `;
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            return messageDiv;
+        }
+
+        function updateButtonState() {
+            const sendButton = document.getElementById('send-button');
+            const messageInput = document.getElementById('message-input');
+            
+            if (isGenerating) {
+                sendButton.textContent = 'Generating...';
+                sendButton.disabled = true;
+                messageInput.disabled = true;
+            } else {
+                sendButton.textContent = 'Send';
+                sendButton.disabled = !selectedModel;
+                messageInput.disabled = !selectedModel;
+            }
+        }
+
+        // Load models on page load
+        loadModels();
+    </script>
+</body>
+</html>

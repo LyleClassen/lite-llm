@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-nvidia
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/11434'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - llm-network
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui-nvidia
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=nvidia-test-key
+      - WEBUI_AUTH=false
+    depends_on:
+      - ollama
+    networks:
+      - llm-network
+
+volumes:
+  ollama_data:
+    driver: local
+  open_webui_data:
+    driver: local
+
+networks:
+  llm-network:
+    driver: bridge
+
+# NVIDIA RTX 3070 Optimization Notes:
+# 
+# RTX 3070 Specifications:
+# - 8GB GDDR6 VRAM
+# - 5888 CUDA Cores
+# - Memory Bandwidth: 448 GB/s
+#
+# Recommended Models for RTX 3070:
+# - Llama 3.1 8B (Q4_K_M): ~4.4GB VRAM, excellent performance
+# - Llama 3.1 8B (Q5_K_M): ~5.1GB VRAM, better quality
+# - Mistral 7B (Q4_K_M): ~4.4GB VRAM, fast inference
+# - CodeLlama 7B (Q4_K_M): ~4.4GB VRAM, code generation
+# - Gemma 2:9B (Q4_K_M): ~5.4GB VRAM, Google's model
+#
+# Expected Performance:
+# - Response Speed: 30-60 tokens/second (much faster than AMD)
+# - Model Loading: 5-15 seconds
+# - Concurrent Users: 3-5 simultaneous conversations
+# - VRAM Usage: ~6GB for 8B models + overhead
+#
+# Prerequisites:
+# 1. NVIDIA Container Toolkit installed:
+#    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+#    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+#      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+#      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+#    sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+#    sudo systemctl restart docker
+#
+# 2. NVIDIA Drivers (version 525+ recommended)
+#
+# To deploy:
+# docker-compose -f docker-compose-nvidia.yml up -d
+#
+# To download models:
+# docker exec ollama-nvidia ollama pull llama3.1:8b-instruct-q4_K_M
+# docker exec ollama-nvidia ollama pull mistral:7b-instruct-q4_K_M

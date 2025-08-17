@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:rocm
+    container_name: ollama-amd
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    environment:
+      - HSA_OVERRIDE_GFX_VERSION=10.3.0  # For RX 570/580 compatibility
+      - HCC_AMDGPU_TARGET=gfx1030
+      - ROCM_PATH=/opt/rocm
+      - HIP_VISIBLE_DEVICES=0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: amd.com/gpu
+              count: 1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=your-secret-key-here
+      - WEBUI_AUTH=false  # Set to true if you want authentication
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  ollama_data:
+    driver: local
+  open_webui_data:
+    driver: local
+
+networks:
+  default:
+    name: llm-network
